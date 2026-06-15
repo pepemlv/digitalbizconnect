@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: digitalbizconnect-backend
+    runtime: node
+    plan: free
+    rootDir: digitalbizconnect-backend
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: FRONTEND_ORIGINS
+        value: https://digitalbizconnect.com
+      - key: STRIPE_SECRET_KEY
+        sync: false
