@@ -23,7 +23,12 @@ import {
   X,
 } from 'lucide-react';
 import type { IndustryConfig } from './industryConfigs';
-import { formatTemplatePrice, getCachedTemplatePrice, subscribeToTemplatePrice } from '../../lib/templatePricing';
+import {
+  formatTemplatePrice,
+  getCachedTemplatePrice,
+  saveWebsitePayment,
+  subscribeToTemplateSetting,
+} from '../../lib/templatePricing';
 
 interface Props {
   config: IndustryConfig;
@@ -113,7 +118,7 @@ function WebsiteCheckoutForm({
   price: number;
   promoPrice: number;
   checkoutMode: CheckoutMode;
-  onPaid: (paymentIntentId: string) => void;
+  onPaid: (paymentIntentId: string) => Promise<void>;
 }) {
   const stripe = useStripe();
   const elements = useElements();
@@ -193,7 +198,21 @@ function WebsiteCheckoutForm({
       }
 
       if (paymentIntent?.status === 'succeeded') {
-        onPaid(paymentIntent.id);
+        await saveWebsitePayment({
+          templateId: config.id,
+          businessName: customerInfo.businessName,
+          websiteDomain: customerInfo.domain,
+          customerName: customerInfo.name,
+          customerEmail: customerInfo.email,
+          customerPhone: customerInfo.phone,
+          amountPaid: price,
+          promoPrice,
+          balanceDue: Math.max(promoPrice - price, 0),
+          checkoutMode,
+          paymentIntentId: paymentIntent.id,
+          notes: customerInfo.notes,
+        });
+        await onPaid(paymentIntent.id);
       } else {
         throw new Error('Payment was not completed.');
       }
@@ -411,6 +430,7 @@ export default function CleaningTemplatePage({ config, onBack }: Props) {
   const [callbackSubmitted, setCallbackSubmitted] = useState(false);
   const [detailedCallbackSubmitted, setDetailedCallbackSubmitted] = useState(false);
   const [templatePrice, setTemplatePrice] = useState(() => getCachedTemplatePrice(config.id));
+  const [templateAvailable, setTemplateAvailable] = useState(true);
   const serviceOptions = useMemo(() => config.quoteOptions?.[1]?.options || ['Standard Clean', 'Deep Clean', 'Move-In/Out'], [config.quoteOptions]);
   const contactEmail = config.websiteDomain ? `hello@${config.websiteDomain}` : 'hello@pristineclean.com';
   const accentStyle = { color: config.accentHex };
@@ -418,12 +438,16 @@ export default function CleaningTemplatePage({ config, onBack }: Props) {
   const accentLightStyle = { backgroundColor: config.accentLightHex, color: config.accentTextHex };
 
   useEffect(() => {
-    return subscribeToTemplatePrice(config.id, setTemplatePrice, (error) => {
-      console.error('Unable to load template price from Firestore:', error);
+    return subscribeToTemplateSetting(config.id, (setting) => {
+      setTemplatePrice(setting.price);
+      setTemplateAvailable(setting.available);
+    }, (error) => {
+      console.error('Unable to load template settings from Firestore:', error);
     });
   }, [config.id]);
 
   const openCheckout = (mode: CheckoutMode) => {
+    if (!templateAvailable) return;
     setCheckoutMode(mode);
   };
 
@@ -442,10 +466,19 @@ export default function CleaningTemplatePage({ config, onBack }: Props) {
             {config.businessName}
           </div>
           <div className="flex flex-col gap-2 sm:flex-row">
-            <button onClick={() => openCheckout('full')} className="rounded-xl px-4 py-2 text-sm font-bold text-white" style={accentBgStyle}>
+            <button
+              onClick={() => openCheckout('full')}
+              disabled={!templateAvailable}
+              className="rounded-xl px-4 py-2 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-50"
+              style={accentBgStyle}
+            >
               Pay Now {formatTemplatePrice(templatePrice)}
             </button>
-            <button onClick={() => openCheckout('reserve')} className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-900 hover:bg-slate-50">
+            <button
+              onClick={() => openCheckout('reserve')}
+              disabled={!templateAvailable}
+              className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-900 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
               Reserve {formatTemplatePrice(reservationPrice)}
             </button>
           </div>
@@ -497,7 +530,7 @@ export default function CleaningTemplatePage({ config, onBack }: Props) {
                   Only {formatTemplatePrice(templatePrice)} One Time
                 </span>
                 <span className="text-sm font-bold text-white">
-                  Reserve today for {formatTemplatePrice(reservationPrice)}
+                  {templateAvailable ? `Reserve today for ${formatTemplatePrice(reservationPrice)}` : 'Not Available'}
                 </span>
               </div>
               <h2 className="mt-2 font-display text-lg font-black leading-snug sm:text-2xl">
@@ -510,7 +543,8 @@ export default function CleaningTemplatePage({ config, onBack }: Props) {
             <div className="flex flex-col gap-2">
               <button
                 onClick={() => openCheckout('full')}
-                className="inline-flex items-center justify-center gap-2 rounded-xl px-5 py-3 text-sm font-bold text-white shadow-lg"
+                disabled={!templateAvailable}
+                className="inline-flex items-center justify-center gap-2 rounded-xl px-5 py-3 text-sm font-bold text-white shadow-lg disabled:cursor-not-allowed disabled:opacity-50"
                 style={accentBgStyle}
               >
                 <CreditCard className="h-4 w-4" />
@@ -518,11 +552,17 @@ export default function CleaningTemplatePage({ config, onBack }: Props) {
               </button>
               <button
                 onClick={() => openCheckout('reserve')}
-                className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/15 bg-white/10 px-5 py-3 text-sm font-bold text-white shadow-lg hover:bg-white/15"
+                disabled={!templateAvailable}
+                className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/15 bg-white/10 px-5 py-3 text-sm font-bold text-white shadow-lg hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <ShoppingCart className="h-4 w-4" />
                 Reserve for {formatTemplatePrice(reservationPrice)}
               </button>
+              {!templateAvailable && (
+                <p className="rounded-xl bg-red-500/10 px-4 py-2 text-center text-xs font-bold text-red-200 ring-1 ring-red-500/20">
+                  Checkout is currently unavailable for this website.
+                </p>
+              )}
             </div>
             <div>
               <p className="mb-2 text-center text-[11px] font-bold uppercase tracking-wider text-white/50">

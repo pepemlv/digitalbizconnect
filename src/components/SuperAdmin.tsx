@@ -5,8 +5,11 @@ import {
   defaultTemplatePrice,
   formatTemplatePrice,
   getCachedTemplatePrice,
+  saveTemplateAvailability,
   saveTemplatePrice,
-  subscribeToTemplatePrices,
+  subscribeToTemplateSettings,
+  subscribeToWebsitePayments,
+  type WebsitePayment,
 } from '../lib/templatePricing';
 
 const superAdminUsername = 'superadmin';
@@ -27,19 +30,31 @@ export default function SuperAdmin() {
   );
   const [savedId, setSavedId] = useState('');
   const [savingId, setSavingId] = useState('');
+  const [availability, setAvailability] = useState<Record<string, boolean>>(() =>
+    Object.fromEntries(templates.map((template) => [template.id, true]))
+  );
   const [isLoading, setIsLoading] = useState(true);
+  const [payments, setPayments] = useState<WebsitePayment[]>([]);
   const [errorMessage, setErrorMessage] = useState('');
 
   useEffect(() => {
     if (!signedIn) return undefined;
 
-    return subscribeToTemplatePrices(
-      (firestorePrices) => {
+    return subscribeToTemplateSettings(
+      (firestoreSettings) => {
         setPrices(
           Object.fromEntries(
             templates.map((template) => [
               template.id,
-              String(firestorePrices[template.id] ?? defaultTemplatePrice),
+              String(firestoreSettings[template.id]?.price ?? defaultTemplatePrice),
+            ]),
+          ),
+        );
+        setAvailability(
+          Object.fromEntries(
+            templates.map((template) => [
+              template.id,
+              firestoreSettings[template.id]?.available ?? true,
             ]),
           ),
         );
@@ -52,6 +67,15 @@ export default function SuperAdmin() {
       },
     );
   }, [signedIn, templates]);
+
+  useEffect(() => {
+    if (!signedIn) return undefined;
+
+    return subscribeToWebsitePayments(
+      setPayments,
+      (error) => setErrorMessage(error.message),
+    );
+  }, [signedIn]);
 
   const login = (event: React.FormEvent) => {
     event.preventDefault();
@@ -89,6 +113,28 @@ export default function SuperAdmin() {
     } finally {
       setSavingId('');
     }
+  };
+
+  const changeAvailability = async (templateId: string, nextAvailable: boolean) => {
+    setAvailability((current) => ({ ...current, [templateId]: nextAvailable }));
+    setErrorMessage('');
+
+    try {
+      await saveTemplateAvailability(templateId, nextAvailable);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to save template availability.');
+    }
+  };
+
+  const formatPaymentDate = (payment: WebsitePayment) => {
+    const value = payment.createdAt;
+
+    if (value instanceof Date) return value.toLocaleString();
+    if (value && 'seconds' in value && value.seconds) {
+      return new Date(value.seconds * 1000).toLocaleString();
+    }
+
+    return 'Pending timestamp';
   };
 
   if (!signedIn) {
@@ -223,9 +269,80 @@ export default function SuperAdmin() {
                   Saved. Checkout now uses {formatTemplatePrice(Number(prices[template.id]))}.
                 </p>
               )}
+
+              <label className="mt-4 block text-xs font-semibold uppercase tracking-wider text-white/45 mb-2">
+                Checkout Status
+              </label>
+              <select
+                value={availability[template.id] === false ? 'unavailable' : 'available'}
+                onChange={(event) => changeAvailability(template.id, event.target.value === 'available')}
+                className="w-full rounded-xl border border-white/10 bg-white px-4 py-3 text-sm font-semibold text-slate-950 outline-none focus:border-orange-500"
+              >
+                <option value="available">Available</option>
+                <option value="unavailable">Not Available</option>
+              </select>
             </div>
           ))}
         </div>
+
+        <section className="mt-10 rounded-2xl border border-white/10 bg-white/[0.04] p-5">
+          <div className="mb-5 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <h2 className="font-display text-2xl font-bold">Payment History</h2>
+              <p className="text-sm text-white/50">Website checkout payments and reservations.</p>
+            </div>
+            <p className="text-sm font-semibold text-white/60">{payments.length} records</p>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-left text-sm">
+              <thead className="text-xs uppercase tracking-wider text-white/40">
+                <tr className="border-b border-white/10">
+                  <th className="py-3 pr-4">Date</th>
+                  <th className="py-3 pr-4">Template</th>
+                  <th className="py-3 pr-4">Name</th>
+                  <th className="py-3 pr-4">Email</th>
+                  <th className="py-3 pr-4">Phone</th>
+                  <th className="py-3 pr-4">Type</th>
+                  <th className="py-3 pr-4">Paid</th>
+                  <th className="py-3 pr-4">Balance</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/10">
+                {payments.map((payment) => (
+                  <tr key={payment.id} className="text-white/75">
+                    <td className="py-3 pr-4 whitespace-nowrap">{formatPaymentDate(payment)}</td>
+                    <td className="py-3 pr-4">
+                      <p className="font-semibold text-white">{payment.businessName}</p>
+                      <p className="text-xs text-white/40">{payment.templateId}</p>
+                    </td>
+                    <td className="py-3 pr-4 whitespace-nowrap">{payment.customerName}</td>
+                    <td className="py-3 pr-4 whitespace-nowrap">{payment.customerEmail}</td>
+                    <td className="py-3 pr-4 whitespace-nowrap">{payment.customerPhone}</td>
+                    <td className="py-3 pr-4">
+                      <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${
+                        payment.checkoutMode === 'reserve'
+                          ? 'bg-yellow-500/15 text-yellow-200'
+                          : 'bg-red-500/15 text-red-200'
+                      }`}>
+                        {payment.checkoutMode === 'reserve' ? 'Reserved' : 'Paid Full'}
+                      </span>
+                    </td>
+                    <td className="py-3 pr-4 font-bold text-white">{formatTemplatePrice(payment.amountPaid)}</td>
+                    <td className="py-3 pr-4">{formatTemplatePrice(payment.balanceDue)}</td>
+                  </tr>
+                ))}
+                {payments.length === 0 && (
+                  <tr>
+                    <td className="py-6 text-center text-white/45" colSpan={8}>
+                      No website payments yet.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
       </main>
     </div>
   );
