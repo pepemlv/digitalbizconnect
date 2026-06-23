@@ -43,6 +43,7 @@ const allowedOrigins = [
   'http://localhost:3000',
   'https://digitalbizconnect.com',
   'https://www.digitalbizconnect.com',
+  'https://webfor59.com',
   ...(process.env.FRONTEND_ORIGINS || '')
     .split(',')
     .map((origin) => origin.trim())
